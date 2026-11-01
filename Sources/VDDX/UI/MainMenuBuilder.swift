@@ -51,7 +51,6 @@ enum MainMenuBuilder {
         let windowMenu = NSMenu(title: "窗口")
         windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        mainMenu.addItem(windowMenuItem)
         windowMenuItem.submenu = windowMenu
         NSApp.windowsMenu = windowMenu
 

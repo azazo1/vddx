@@ -141,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        controller.startCapture()
         Log.shared.info("打开镜像窗口: \(display.profile.name)")
     }
 
