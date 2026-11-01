@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要发布的已有 tag (留空则只构建)
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      is_release: ${{ steps.resolve.outputs.is_release }}
+      tag_name: ${{ steps.resolve.outputs.tag_name }}
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      version: ${{ steps.resolve.outputs.version }}
+      build_version: ${{ steps.resolve.outputs.build_version }}
+      artifact_version: ${{ steps.resolve.outputs.artifact_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 准备 uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+
+      - name: 解析构建版本
+        id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          is_release=false
+          tag_name=""
+          source_ref="$GITHUB_SHA"
+
+          if [ "$REF_TYPE" = "tag" ]; then
+            tag_name="$REF_NAME"
+            is_release=true
+          elif [ -n "${INPUT_TAG:-}" ]; then
+            git check-ref-format "refs/tags/$INPUT_TAG"
+            git fetch --force --tags origin
+            test -n "$(git rev-parse -q --verify "refs/tags/$INPUT_TAG^{commit}")"
+            tag_name="$INPUT_TAG"
+            is_release=true
+          fi
+
+          version=""
+          if [ "$is_release" = "true" ]; then
+            source_ref="refs/tags/$tag_name"
+            case "$tag_name" in
+              v*.*.*) ;;
+              *) echo "tag 必须形如 v1.2.3: $tag_name" >&2; exit 1 ;;
+            esac
+            version="$tag_name"
+            build_version="$tag_name"
+          else
+            build_version="$(PROJECT_PACKAGE_VERSION=0.1.0 uv run --no-project python scripts/build-version.py --with-prefix)"
+          fi
+
+          artifact_version="${build_version#v}"
+          {
+            echo "is_release=$is_release"
+            echo "tag_name=$tag_name"
+            echo "source_ref=$source_ref"
+            echo "version=$version"
+            echo "build_version=$build_version"
+            echo "artifact_version=$artifact_version"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.source_ref }}
+          fetch-depth: 0
+
+      - name: 准备 uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+
+      - name: 构建与打包
+        env:
+          PROJECT_BUILD_VERSION: ${{ needs.version.outputs.build_version }}
+        run: uv run --no-project python scripts/dist.py
+
+      - name: 校验产物
+        env:
+          ARTIFACT_VERSION: ${{ needs.version.outputs.artifact_version }}
+        run: |
+          set -euo pipefail
+          dmg="dist/vddx-${ARTIFACT_VERSION}-macos-${{ matrix.arch }}.dmg"
+          test -f "$dmg"
+          file "$dmg"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: vddx-${{ needs.version.outputs.artifact_version }}-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 精确获取目标 tag
+        env:
+          TAG: ${{ needs.version.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          test "$(git cat-file -t "refs/tags/${TAG}")" = "tag"
+
+      - name: 校验发布说明与 tag 一致
+        env:
+          TAG: ${{ needs.version.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NOTES="docs/changelog/${VERSION}.md"
+          test -s "$NOTES"
+          git for-each-ref "refs/tags/${TAG}" --format='%(contents)' > /tmp/tag-body.md
+          test -s /tmp/tag-body.md
+          if [ "$(cat /tmp/tag-body.md)" != "$(cat "$NOTES")" ]; then
+            echo "tag annotation 与 docs/changelog/${VERSION}.md 不一致" >&2
+            diff -u "$NOTES" /tmp/tag-body.md >&2 || true
+            exit 1
+          fi
+
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成校验和
+        run: |
+          set -euo pipefail
+          count=$(find dist -name '*.dmg' -type f | wc -l | tr -d ' ')
+          test "$count" -eq 2
+          (cd dist && shasum -a 256 ./*.dmg > SHA256SUMS)
+          test "$(find dist -name 'SHA256SUMS' -type f | wc -l | tr -d ' ')" -eq 1
+
+      - name: 生成发布正文
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          cp "docs/changelog/${VERSION}.md" /tmp/notes.md
+          printf '\n---\n\n' >> /tmp/notes.md
+          gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$(git rev-parse HEAD)" \
+            --jq .body >> /tmp/notes.md
+
+      - name: 创建或更新 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TITLE="VDDX v${VERSION#v}"
+          PRERELEASE=""
+          case "$VERSION" in
+            *-*) PRERELEASE="--prerelease" ;;
+          esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes-file /tmp/notes.md $PRERELEASE
+            gh release upload "$TAG" dist/*.dmg dist/SHA256SUMS --clobber
+          else
+            gh release create "$TAG" --verify-tag --title "$TITLE" --notes-file /tmp/notes.md $PRERELEASE
+            gh release upload "$TAG" dist/*.dmg dist/SHA256SUMS
+          fi
