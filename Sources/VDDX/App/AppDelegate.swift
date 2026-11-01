@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var updateWindowController: UpdateWindowController?
+    private var aboutWindowController: AboutWindowController?
     private var trayController: TrayController?
     private var mirrorControllers: [UUID: MirrorWindowController] = [:]
     private var signalSources: [DispatchSourceSignal] = []
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         installSignalHandlers()
         installExceptionHandler()
+        NSApp.mainMenu = MainMenuBuilder.make(appDelegate: self)
 
         model.displayManager.restoreSavedDisplays()
         trayController = TrayController(model: model, delegate: self)
@@ -222,6 +224,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model?.createDisplayRequest = true
     }
 
+    @objc func menuNewDisplay() {
+        requestCreateDisplay()
+    }
+
+    @objc func menuOpenSettings() {
+        openSettings()
+    }
+
+    @objc func showAboutPanel() {
+        if aboutWindowController == nil {
+            aboutWindowController = AboutWindowController()
+        }
+        aboutWindowController?.showWindow(nil)
+        aboutWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     // MARK: - 退出
 
     func requestQuit() {
@@ -246,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model?.settingsStore.save()
         updateWindowController?.close()
         settingsWindowController?.close()
+        aboutWindowController?.close()
         Log.shared.info("退出清理完成")
         Log.shared.flush()
     }
