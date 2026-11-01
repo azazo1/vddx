@@ -86,6 +86,10 @@ struct MainWindowView: View {
             .controlSize(.small)
             .keyboardShortcut("n", modifiers: .command)
 
+            IconButton(systemName: "rectangle.on.rectangle", help: "打开系统显示器设置") {
+                SystemSettingsLink.displays.open()
+            }
+
             IconButton(systemName: "gearshape", help: "设置", action: onOpenSettings)
         }
         .padding(.horizontal, 14)

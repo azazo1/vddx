@@ -42,6 +42,20 @@ struct SettingsView: View {
                 }
             }
 
+            Section("屏幕录制权限") {
+                HStack {
+                    Text(ScreenCapturePermission.isGranted ? "已授权" : "未授权")
+                        .foregroundStyle(ScreenCapturePermission.isGranted ? Color.green : Color.orange)
+                    Spacer()
+                    Button("打开系统设置") {
+                        SystemSettingsLink.screenRecording.open()
+                    }
+                }
+                Text("镜像窗口需要该权限. macOS 15 起系统不再自动弹窗, 需要手动添加 VDDX 并勾选.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.secondaryText)
+            }
+
             Section("关于") {
                 HStack {
                     Text("数据目录")
