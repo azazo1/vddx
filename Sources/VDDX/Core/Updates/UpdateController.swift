@@ -58,6 +58,10 @@ final class UpdateController: ObservableObject {
     }
 
     func check(silent: Bool) async {
+        guard !AppInfo.isDevBuild else {
+            Log.shared.info("开发构建跳过更新检查")
+            return
+        }
         guard !isBusy else { return }
         if silent {
             if let lastSilentCheck, Date().timeIntervalSince(lastSilentCheck) < 3600 * 6 {
