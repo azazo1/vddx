@@ -13,10 +13,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mirrorControllers: [UUID: MirrorWindowController] = [:]
     private var signalSources: [DispatchSourceSignal] = []
     private var didShutdown = false
+    private var instanceLock: SingleInstanceLock?
 
     // MARK: - 生命周期
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 同一数据目录只允许一个实例; 隔离调试实例使用不同数据目录, 可以并行运行.
+        guard let lock = SingleInstanceLock(directory: AppPaths.dataDirectory) else {
+            Log.shared.warn("同一数据目录已有实例在运行, 当前进程退出")
+            activateExistingInstance()
+            Log.shared.flush()
+            exit(0)
+        }
+        instanceLock = lock
+
         let model = AppModel()
         self.model = model
         model.applyLogLevel()
@@ -283,6 +293,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             source.resume()
             signalSources.append(source)
+        }
+    }
+
+    private func activateExistingInstance() {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+        for application in NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier) {
+            if application.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                application.activate(options: [])
+                break
+            }
         }
     }
 

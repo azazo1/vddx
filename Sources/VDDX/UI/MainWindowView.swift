@@ -48,7 +48,7 @@ struct MainWindowView: View {
         .alert("销毁虚拟屏?", isPresented: deleteAlertBinding) {
             Button("销毁", role: .destructive) {
                 if let display = deletingDisplay {
-                    manager.destroy(display)
+                    manager.forget(display)
                     Log.shared.info("用户销毁虚拟屏: \(display.profile.name)")
                 }
                 deletingDisplay = nil
@@ -57,7 +57,7 @@ struct MainWindowView: View {
                 deletingDisplay = nil
             }
         } message: {
-            Text("该屏会立即从系统中移除, 正在镜像它的窗口会断开.")
+            Text("该屏会立即从系统中移除, 并取消它的启动时自动重建配置. 正在镜像它的窗口会断开.")
         }
         .onReceive(model.$createDisplayRequest) { requested in
             guard requested else { return }
