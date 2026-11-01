@@ -80,56 +80,23 @@ final class VirtualDisplayManager: ObservableObject {
             throw VirtualDisplayError.invalidProfile("分辨率或刷新率超出支持范围")
         }
 
-        var error = VDXError()
-        var modes = [
-            VDXDisplayMode(
-                width: UInt32(profile.logicalWidth),
-                height: UInt32(profile.logicalHeight),
-                refresh_rate: profile.refreshRate
-            )
-        ]
-        let size = DisplayModeCatalog.millimeters(
-            forLogicalWidth: profile.logicalWidth,
-            height: profile.logicalHeight
-        )
-
         let started = DispatchTime.now().uptimeNanoseconds
-        let handle: VDXDisplayHandle? = profile.name.withCString { name in
-            modes.withUnsafeBufferPointer { buffer in
-                VDXDisplayCreate(
-                    name,
-                    UInt32(profile.pixelWidth),
-                    UInt32(profile.pixelHeight),
-                    size.width,
-                    size.height,
-                    Self.serialNumber(for: profile.id),
-                    Self.productID,
-                    Self.vendorID,
-                    buffer.baseAddress,
-                    buffer.count,
-                    profile.hiDPI ? 1 : 0,
-                    &error
-                )
-            }
+        let host: DisplayHost
+        do {
+            host = try DisplayHost.launch(profile: profile)
+        } catch {
+            Log.shared.error("创建虚拟屏 \(profile.name) 失败: \(error.localizedDescription)")
+            throw error
         }
         let elapsedMS = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        let displayID = host.displayID
 
-        guard let handle else {
-            let message = withUnsafeBytes(of: &error.message) { raw in
-                String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
-            }
-            let reason = message.isEmpty ? "未知原因" : message
-            Log.shared.error("创建虚拟屏 \(profile.name) 失败: \(reason)")
-            throw VirtualDisplayError.creationFailed(reason)
+        host.observeTermination { [weak self] in
+            guard let self else { return }
+            self.screenChangeTick += 1
+            Log.shared.warn("虚拟屏进程已退出: \(profile.name)")
         }
-
-        let displayID = VDXDisplayGetID(handle)
-        guard displayID != 0 else {
-            VDXDisplayDestroy(handle)
-            throw VirtualDisplayError.invalidDisplayID
-        }
-
-        let display = VirtualDisplay(profile: profile, handle: handle, displayID: displayID)
+        let display = VirtualDisplay(profile: profile, host: host)
         displays.append(display)
         if persist {
             syncStore(with: profile)
@@ -193,14 +160,4 @@ final class VirtualDisplayManager: ObservableObject {
         }
     }
 
-    private static func serialNumber(for id: UUID) -> UInt32 {
-        var hash: UInt32 = 2_166_136_261
-        withUnsafeBytes(of: id.uuid) { bytes in
-            for byte in bytes {
-                hash ^= UInt32(byte)
-                hash &*= 16_777_619
-            }
-        }
-        return hash
-    }
 }

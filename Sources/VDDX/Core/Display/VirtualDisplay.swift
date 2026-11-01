@@ -1,44 +1,41 @@
 import CoreGraphics
-import CVirtualDisplayBridge
 import Foundation
 
 /// 一块已经上线的虚拟屏.
 ///
-/// 进程存活期间该屏存在; 调用 `destroy()` 或进程退出后系统会回收它.
+/// 实际持有它的是 `DisplayHost` 子进程: 进程活着屏就在, 子进程退出屏就消失.
 @MainActor
 final class VirtualDisplay: Identifiable {
     nonisolated let id: UUID
     let displayID: CGDirectDisplayID
-    let createdAt = Date()
     private(set) var profile: DisplayProfile
-    private var handle: VDXDisplayHandle?
+    private let host: DisplayHost
+    private var destroyed = false
 
     var isAlive: Bool {
-        handle != nil && CGDisplayIsActive(displayID) != 0
+        host.isRunning && CGDisplayIsActive(displayID) != 0
     }
 
-    init(profile: DisplayProfile, handle: VDXDisplayHandle, displayID: CGDirectDisplayID) {
+    init(profile: DisplayProfile, host: DisplayHost) {
         self.id = profile.id
         self.profile = profile
-        self.handle = handle
-        self.displayID = displayID
+        self.host = host
+        self.displayID = host.displayID
     }
 
     func updateProfile(_ profile: DisplayProfile) {
         self.profile = profile
     }
 
-    /// 释放底层虚拟屏, 之后 `isAlive` 为 false.
+    /// 结束 host 进程, 系统随之移除虚拟屏.
     func destroy() {
-        guard let handle else { return }
-        VDXDisplayDestroy(handle)
-        self.handle = nil
+        guard !destroyed else { return }
+        destroyed = true
+        host.terminate()
         Log.shared.info("虚拟屏已销毁: \(profile.name) displayID=\(displayID)")
     }
 
     deinit {
-        if let handle {
-            VDXDisplayDestroy(handle)
-        }
+        host.terminate()
     }
 }

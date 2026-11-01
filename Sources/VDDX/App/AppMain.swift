@@ -6,6 +6,11 @@ import Foundation
 struct VDDXMain {
     @MainActor
     static func main() {
+        // 子进程模式: 只持有一块虚拟屏, 不初始化 AppKit.
+        if CommandLine.arguments.count >= 2, CommandLine.arguments[1] == "--display-host" {
+            DisplayHostMode.run(arguments: CommandLine.arguments)
+        }
+
         AppPaths.prepareDirectories()
 
         let environmentLevel = LogLevel(name: ProcessInfo.processInfo.environment["VDDX_LOG_LEVEL"] ?? "") ?? .info
